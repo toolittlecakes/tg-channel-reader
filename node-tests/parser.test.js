@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseArgs } from "../node-src/cli.js";
 import {
   decodeDataView,
   normalizeChannel,
+  parseCommentsFragment,
+  parseDiscussionPage,
   parseMediaPolicy,
   parsePage,
   safeFilename,
@@ -17,6 +20,11 @@ test("parseMediaPolicy", () => {
   assert.deepEqual(parseMediaPolicy("none"), new Set());
   assert.equal(parseMediaPolicy("all"), null);
   assert.deepEqual(parseMediaPolicy("photo,video"), new Set(["photo", "video"]));
+});
+
+test("parseArgs accepts comments-limit all", () => {
+  assert.equal(parseArgs(["contest", "--comments-limit", "all"]).commentsLimit, "all");
+  assert.equal(parseArgs(["contest", "--comments-limit", "100"]).commentsLimit, 100);
 });
 
 test("decodeDataView", () => {
@@ -58,4 +66,112 @@ test("parse grouped document placeholder", () => {
   assert.equal(posts[0].media[0].title, "demo.pdf");
   assert.equal(posts[0].media[0].size, "2.3 MB");
   assert.equal(posts[0].media[0].url, null);
+});
+
+test("parse discussion widget page with comments", () => {
+  const html = `
+    <div class="tgme_post_discussion_header_wrap">
+      <h3><span class="js-header">740 comments</span> on <a href="https://t.me/contest/198">this post</a></h3>
+    </div>
+    <div class="tgme_post_discussion js-message_history">
+      <div class="tme_messages_more js-messages_more" data-before="235679">Show more</div>
+      <div class="tgme_widget_message_wrap js-widget_message_wrap">
+        <div class="tgme_widget_message js-widget_message" data-post-id="238737">
+          <div class="tgme_widget_message_user">
+            <a href="https://t.me/skorphil"><i><img src="//example.com/avatar.jpg"></i></a>
+          </div>
+          <div class="tgme_widget_message_bubble">
+            <div class="tgme_widget_message_author accent_color">
+              <a class="tgme_widget_message_author_name" href="https://t.me/skorphil">
+                <span dir="auto">Philipp</span>
+              </a>
+            </div>
+            <div class="tgme_widget_message_reply js-reply_to" data-reply-to="1">
+              <span class="tgme_widget_message_author_name">Alice</span>
+              <div class="tgme_widget_message_text js-message_reply_text">Original<br/>text</div>
+            </div>
+            <div class="tgme_widget_message_text js-message_text">Not bad <a href="https://example.com">link</a></div>
+            <div class="tgme_widget_message_reactions js-message_reactions">
+              <span class="tgme_reaction"><b>❤</b>3</span>
+            </div>
+            <div class="tgme_widget_message_footer">
+              <a class="tgme_widget_message_date" href="https://t.me/contest/198?comment=238737">
+                <time datetime="2024-07-09T07:23:30+00:00">Jul 9, 2024</time>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="tme_messages_more js-messages_more autoload hide" data-after="238737"></div>
+    </div>
+    <form class="tgme_post_discussion_new_message_form js-new_message_form">
+      <input type="hidden" name="peer" value="c1322215945_4517828080545053944" />
+      <input type="hidden" name="top_msg_id" value="130198" />
+      <input type="hidden" name="discussion_hash" value="83c60ba1c7893cb3dd" />
+    </form>
+    <script>TWidgetAuth.init({"api_url":"https:\\/\\/t.me\\/api\\/method?api_hash=abc","unauth":true});</script>
+  `;
+
+  const page = parseDiscussionPage(html, "contest", 198);
+  assert.equal(page.available, true);
+  assert.equal(page.total_count, 740);
+  assert.equal(page.next_before, 235679);
+  assert.equal(page.next_after, 238737);
+  assert.equal(page.api_url, "https://t.me/api/method?api_hash=abc");
+  assert.deepEqual(page.request, {
+    peer: "c1322215945_4517828080545053944",
+    top_msg_id: "130198",
+    discussion_hash: "83c60ba1c7893cb3dd",
+  });
+  assert.equal(page.comments.length, 1);
+  assert.equal(page.comments[0].id, "238737");
+  assert.equal(page.comments[0].author_name, "Philipp");
+  assert.equal(page.comments[0].author_username, "skorphil");
+  assert.equal(page.comments[0].author_avatar_url, "https://example.com/avatar.jpg");
+  assert.equal(page.comments[0].text_plain, "Not bad link");
+  assert.equal(page.comments[0].reply_to.id, "1");
+  assert.equal(page.comments[0].reply_to.text_plain, "Original\ntext");
+  assert.deepEqual(page.comments[0].reactions, [{ emoji: "❤", count: "3" }]);
+  assert.deepEqual(page.comments[0].links, [{ text: "link", url: "https://example.com/" }]);
+});
+
+test("parse unavailable discussion widget page", () => {
+  const html = `
+    <div class="tgme_post_discussion tgme_widget_messages_helper js-message_history">
+      <div class="tgme_widget_message_wrap js-widget_message_wrap js-no_messages_wrap">
+        <div class="tme_no_messages_found">Discussion is not available at the moment.</div>
+      </div>
+    </div>
+  `;
+
+  const page = parseDiscussionPage(html, "durov", 508);
+  assert.equal(page.available, false);
+  assert.equal(page.unavailable_reason, "discussion_unavailable");
+  assert.equal(page.comments.length, 0);
+});
+
+test("parse comments API fragment", () => {
+  const fragment = `
+    <div class="tme_messages_more js-messages_more" data-before="193654">Show more</div>
+    <div class="tgme_widget_message_wrap js-widget_message_wrap">
+      <div class="tgme_widget_message js-widget_message" data-post-id="193654">
+        <div class="tgme_widget_message_bubble">
+          <div class="tgme_widget_message_author accent_color">
+            <span class="tgme_widget_message_author_name">Deleted Account</span>
+          </div>
+          <div class="tgme_widget_message_text js-message_text"><code>Hello</code><br/><i>world</i></div>
+          <div class="tgme_widget_message_footer">
+            <a class="tgme_widget_message_date" href="https://t.me/contest/198?comment=193654">
+              <time datetime="2022-04-20T09:09:35+00:00">Apr 20, 2022</time>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const page = parseCommentsFragment(fragment, "contest", 198);
+  assert.equal(page.next_before, 193654);
+  assert.equal(page.comments.length, 1);
+  assert.equal(page.comments[0].text_plain, "Hello\nworld");
 });

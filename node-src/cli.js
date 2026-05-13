@@ -5,8 +5,11 @@ import {
   applyMediaPolicy,
   channelPageUrl,
   dedupePosts,
+  discussionPageUrl,
   mediaPolicyLabel,
   normalizeChannel,
+  parseCommentsFragment,
+  parseDiscussionPage,
   parseMediaPolicy,
   parsePage,
   postSortKey,
@@ -30,6 +33,7 @@ export async function main(argv) {
     before: args.before,
     sleepMs: args.sleep * 1000,
     failOnMediaError: args.failOnMediaError,
+    commentsLimit: args.commentsLimit,
   });
 
   console.log(`saved ${result.count} posts -> ${result.outputFile}`);
@@ -49,9 +53,13 @@ export async function readChannel({
   before,
   sleepMs,
   failOnMediaError,
+  commentsLimit = 0,
 }) {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error("--limit must be >= 1");
+  }
+  if (commentsLimit !== "all" && (!Number.isInteger(commentsLimit) || commentsLimit < 0)) {
+    throw new Error('--comments-limit must be >= 0 or "all"');
   }
 
   await mkdir(outDir, { recursive: true });
@@ -109,6 +117,15 @@ export async function readChannel({
     throw new Error(`${mediaDownloadFailures} selected media item(s) could not be downloaded`);
   }
 
+  if (commentsLimit === "all" || commentsLimit > 0) {
+    for (const post of selectedPosts) {
+      post.comments = await readPostComments({ channel, postId: post.post_id, limit: commentsLimit, sleepMs });
+      if (sleepMs > 0) {
+        await sleep(sleepMs);
+      }
+    }
+  }
+
   const firstChannelInfo = pages.find((page) => page.channel_info)?.channel_info ?? {};
   const payload = {
     schema_version: 1,
@@ -123,6 +140,7 @@ export async function readChannel({
       limit,
       before,
       media: mediaPolicyLabel(mediaTypes),
+      comments_limit: commentsLimit,
     },
     count: selectedPosts.length,
     media_download_failures: mediaDownloadFailures,
@@ -140,13 +158,129 @@ export async function readChannel({
   };
 }
 
-function parseArgs(argv) {
+async function readPostComments({ channel, postId, limit, sleepMs }) {
+  const pageSize = limit === "all" ? 50 : Math.min(limit, 50);
+  const url = discussionPageUrl(channel, postId, pageSize);
+  const html = await fetchText(url);
+  const firstPage = parseDiscussionPage(html, channel, postId);
+  const pages = [
+    {
+      url,
+      method: "embed",
+      comments: firstPage.comments.length,
+      next_before: firstPage.next_before,
+      available: firstPage.available,
+      unavailable_reason: firstPage.unavailable_reason,
+    },
+  ];
+
+  if (!firstPage.available) {
+    return {
+      available: false,
+      unavailable_reason: firstPage.unavailable_reason,
+      total_count: firstPage.total_count,
+      total_count_text: firstPage.total_count_text,
+      loaded_count: 0,
+      pages,
+      comments: [],
+    };
+  }
+
+  assertDiscussionRequest(firstPage, channel, postId);
+
+  const seenCursors = new Set();
+  const comments = [...firstPage.comments];
+  let totalCount = firstPage.total_count;
+  let totalCountText = firstPage.total_count_text;
+  let nextBefore = firstPage.next_before;
+
+  while ((limit === "all" || comments.length < limit) && nextBefore != null) {
+    if (seenCursors.has(nextBefore)) {
+      throw new Error(`Comments pagination loop detected at ${channel}/${postId} before_id=${nextBefore}`);
+    }
+    seenCursors.add(nextBefore);
+
+    const result = await postWidgetApi(firstPage.api_url, {
+      method: "loadComments",
+      peer: firstPage.request.peer,
+      top_msg_id: firstPage.request.top_msg_id,
+      discussion_hash: firstPage.request.discussion_hash,
+      before_id: nextBefore,
+    });
+    if (!result.ok) {
+      throw new Error(`Comments fetch failed for ${channel}/${postId}: ${result.error ?? "unknown API error"}`);
+    }
+
+    const page = parseCommentsFragment(result.comments_html ?? "", channel, postId);
+    comments.push(...page.comments);
+    totalCount = typeof result.comments_cnt === "number" ? result.comments_cnt : totalCount;
+    totalCountText = result.header_html ?? totalCountText;
+    pages.push({
+      url: firstPage.api_url,
+      method: "loadComments",
+      before_id: nextBefore,
+      comments: page.comments.length,
+      next_before: page.next_before,
+    });
+    nextBefore = page.next_before;
+
+    if (sleepMs > 0) {
+      await sleep(sleepMs);
+    }
+  }
+
+  const sortedComments = dedupeComments(comments).sort(
+    (left, right) => Number.parseInt(left.id, 10) - Number.parseInt(right.id, 10),
+  );
+  const selectedComments =
+    limit === "all" ? sortedComments : sortedComments.slice(Math.max(0, sortedComments.length - limit));
+
+  return {
+    available: true,
+    unavailable_reason: null,
+    total_count: totalCount,
+    total_count_text: totalCountText,
+    loaded_count: selectedComments.length,
+    pages,
+    comments: selectedComments,
+  };
+}
+
+function assertDiscussionRequest(page, channel, postId) {
+  if (!page.api_url || !page.request.peer || !page.request.top_msg_id || !page.request.discussion_hash) {
+    throw new Error(`Discussion widget metadata is missing for ${channel}/${postId}`);
+  }
+}
+
+function dedupeComments(comments) {
+  return [...new Map(comments.map((comment) => [comment.id, comment])).values()];
+}
+
+async function postWidgetApi(url, params) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "user-agent": userAgent(),
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Fetch failed for ${url}: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+export function parseArgs(argv) {
   const args = {
     channel: null,
     limit: 50,
     out: "telegram_channel_output",
     media: "none",
     before: null,
+    commentsLimit: 0,
     sleep: 0.3,
     failOnMediaError: false,
     help: false,
@@ -164,6 +298,8 @@ function parseArgs(argv) {
       args.media = argv[++index];
     } else if (arg === "--before") {
       args.before = parseIntValue("--before", argv[++index]);
+    } else if (arg === "--comments-limit") {
+      args.commentsLimit = parseCommentsLimit(argv[++index]);
     } else if (arg === "--sleep") {
       args.sleep = parseFloatValue("--sleep", argv[++index]);
     } else if (arg === "--fail-on-media-error") {
@@ -193,6 +329,16 @@ function parseIntValue(name, value) {
     throw new Error(`${name} expects an integer`);
   }
   return parsed;
+}
+
+function parseCommentsLimit(value) {
+  if (value == null) {
+    throw new Error("--comments-limit expects a value");
+  }
+  if (value === "all") {
+    return "all";
+  }
+  return parseIntValue("--comments-limit", value);
 }
 
 function parseFloatValue(name, value) {
@@ -236,6 +382,7 @@ Options:
   --out <dir>              Output directory. Default: telegram_channel_output
   --media <policy>         none, all, or comma list: photo,video,document,audio,sticker. Default: none
   --before <n>             Start from a specific Telegram before cursor
+  --comments-limit <n|all> Save latest comments per post, or all available comments. Default: 0
   --sleep <seconds>        Delay between page requests. Default: 0.3
   --fail-on-media-error    Exit non-zero if selected media cannot be downloaded
   -h, --help               Show this help

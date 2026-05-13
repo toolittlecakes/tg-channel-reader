@@ -52,6 +52,14 @@ export function channelPageUrl(channel, before) {
   return before == null ? `${BASE_URL}/s/${channel}` : `${BASE_URL}/s/${channel}?before=${before}`;
 }
 
+export function discussionPageUrl(channel, postId, commentsLimit) {
+  const url = new URL(`${BASE_URL}/${channel}/${postId}`);
+  url.searchParams.set("embed", "1");
+  url.searchParams.set("discussion", "1");
+  url.searchParams.set("comments_limit", String(commentsLimit));
+  return url.toString();
+}
+
 export function parsePage(html, channel) {
   const $ = cheerio.load(html);
   const before = $("a.js-messages_more[data-before]").first().attr("data-before");
@@ -63,6 +71,31 @@ export function parsePage(html, channel) {
     nextBefore: before && /^\d+$/.test(before) ? Number.parseInt(before, 10) : null,
     channelInfo: parseChannelInfo($),
   };
+}
+
+export function parseDiscussionPage(html, channel, postId) {
+  const $ = cheerio.load(html);
+  const noMessages = textOrNull($(".tme_no_messages_found").first());
+  const form = $(".js-new_message_form").first();
+  const parsed = parseCommentsDocument($, channel, postId);
+  const authOptions = parseWidgetAuthOptions($);
+
+  return {
+    ...parsed,
+    available: parsed.comments.length > 0 || form.length > 0,
+    unavailable_reason: noMessages && form.length === 0 ? "discussion_unavailable" : null,
+    api_url: typeof authOptions.api_url === "string" ? authOptions.api_url : null,
+    request: {
+      peer: form.find('input[name="peer"]').first().attr("value") ?? null,
+      top_msg_id: form.find('input[name="top_msg_id"]').first().attr("value") ?? null,
+      discussion_hash: form.find('input[name="discussion_hash"]').first().attr("value") ?? null,
+    },
+  };
+}
+
+export function parseCommentsFragment(html, channel, postId) {
+  const $ = cheerio.load(`<main>${html}</main>`);
+  return parseCommentsDocument($, channel, postId);
 }
 
 export function decodeDataView(value) {
@@ -123,6 +156,67 @@ function parseChannelInfo($) {
     description: textOrNull($(".tgme_channel_info_description").first()),
     avatar_url: absoluteUrl($(".tgme_channel_info_header img, .tgme_header_info img").first().attr("src")),
     counters,
+  };
+}
+
+function parseCommentsDocument($, channel, postId) {
+  const before = $(".js-messages_more[data-before]").first().attr("data-before");
+  const after = $(".js-messages_more[data-after]").first().attr("data-after");
+  const countText = textOrNull($(".js-header").first());
+
+  return {
+    total_count: parseCount(countText),
+    total_count_text: countText,
+    next_before: before && /^\d+$/.test(before) ? Number.parseInt(before, 10) : null,
+    next_after: after && /^\d+$/.test(after) ? Number.parseInt(after, 10) : null,
+    comments: $("div.js-widget_message[data-post-id]")
+      .toArray()
+      .map((element) => parseComment($, $(element), channel, postId))
+      .filter(Boolean),
+  };
+}
+
+function parseComment($, message, channel, postId) {
+  const rawId = message.attr("data-post-id");
+  if (!/^\d+$/.test(rawId ?? "")) return null;
+
+  const bubble = message.find(".tgme_widget_message_bubble").first();
+  const textNode = bubble.children(".tgme_widget_message_text.js-message_text").first();
+  const textHtml = textNode.length ? textNode.html() : null;
+  const authorNode = bubble.find(".tgme_widget_message_author_name").first();
+  const authorUrl = absoluteUrl(authorNode.is("a") ? authorNode.attr("href") : null);
+  const replyNode = bubble.children(".tgme_widget_message_reply.js-reply_to").first();
+
+  return {
+    id: rawId,
+    url:
+      absoluteUrl(message.find(".tgme_widget_message_date[href]").first().attr("href")) ??
+      `${BASE_URL}/${channel}/${postId}?comment=${rawId}`,
+    published_at: message.find("time[datetime]").first().attr("datetime") ?? null,
+    author_name: textOrNull(authorNode),
+    author_url: authorUrl,
+    author_username: usernameFromTelegramUrl(authorUrl),
+    author_avatar_url: absoluteUrl(
+      message.find(".tgme_widget_message_user img[src]").first().attr("src") ??
+        message.find(".tgme_widget_message_user video[poster]").first().attr("poster"),
+    ),
+    text_plain: textHtml == null ? null : plainText(textHtml),
+    text_html: textHtml,
+    reply_to: parseCommentReply($, replyNode),
+    reactions: parseReactions($, message),
+    links: parseLinks($, textNode),
+  };
+}
+
+function parseCommentReply($, replyNode) {
+  if (!replyNode.length) return null;
+  const textNode = replyNode.find(".js-message_reply_text").first();
+  const textHtml = textNode.length ? textNode.html() : null;
+  return {
+    id: replyNode.attr("data-reply-to") ?? null,
+    author_name: textOrNull(replyNode.find(".tgme_widget_message_author_name").first()),
+    text_plain: textHtml == null ? null : plainText(textHtml),
+    text_html: textHtml,
   };
 }
 
@@ -264,6 +358,44 @@ function styleUrl(style) {
 function absoluteUrl(value) {
   if (!value) return null;
   return value.startsWith("//") ? `https:${value}` : new URL(value, BASE_URL).toString();
+}
+
+function usernameFromTelegramUrl(value) {
+  if (!value) return null;
+  const url = new URL(value);
+  if (url.hostname !== "t.me") return null;
+  const username = url.pathname.replace(/^\/+|\/+$/g, "");
+  return /^[A-Za-z0-9_]{3,}$/.test(username) ? username : null;
+}
+
+function parseWidgetAuthOptions($) {
+  const scriptText = $("script")
+    .toArray()
+    .map((element) => $(element).html() ?? "")
+    .find((text) => text.includes("TWidgetAuth.init("));
+  const match = scriptText?.match(/TWidgetAuth\.init\((\{.*?\})\);/s);
+  if (!match) return {};
+  try {
+    const parsed = JSON.parse(match[1]);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseCount(value) {
+  const match = value?.trim().match(/^([\d.,\s]+)\s*([KMB])?\b/i);
+  if (!match) return null;
+
+  const suffix = match[2]?.toUpperCase();
+  if (suffix) {
+    const base = Number.parseFloat(match[1].replace(/\s/g, "").replace(",", "."));
+    const multiplier = { K: 1_000, M: 1_000_000, B: 1_000_000_000 }[suffix];
+    return Number.isFinite(base) ? Math.round(base * multiplier) : null;
+  }
+
+  const normalized = match[1].replace(/[^\d]/g, "");
+  return normalized ? Number.parseInt(normalized, 10) : null;
 }
 
 function isDirectDownloadUrl(url) {
