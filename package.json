@@ -1,0 +1,34 @@
+{
+  "name": "tg-channel-reader",
+  "version": "0.1.0",
+  "description": "CLI reader for public Telegram t.me/s channel previews.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toolittlecakes/tg-channel-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/toolittlecakes/tg-channel-reader/issues"
+  },
+  "homepage": "https://github.com/toolittlecakes/tg-channel-reader#readme",
+  "bin": {
+    "tg-channel-read": "bin/tg-channel-read.js"
+  },
+  "files": [
+    "bin",
+    "node-src",
+    "node-tests",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test node-tests/*.test.js",
+    "test:live": "node node-tests/live-smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "cheerio": "^1.2.0"
+  }
+}
