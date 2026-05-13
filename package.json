@@ -1,6 +1,6 @@
 {
   "name": "tg-channel-reader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI reader for public Telegram t.me/s channel previews.",
   "type": "module",
   "repository": {
