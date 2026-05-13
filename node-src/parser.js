@@ -150,10 +150,12 @@ function parseChannelInfo($) {
     const label = textOrNull(counter.find(".counter_type").first());
     if (label) counters[label] = textOrNull(counter.find(".counter_value").first());
   });
+  const descriptionNode = $(".tgme_channel_info_description").first();
+  const description = descriptionNode.length ? plainText(descriptionNode.html() ?? "") : null;
 
   return {
     title: textOrNull($(".tgme_channel_info_header_title span, .tgme_header_title span").first()),
-    description: textOrNull($(".tgme_channel_info_description").first()),
+    description: description || null,
     avatar_url: absoluteUrl($(".tgme_channel_info_header img, .tgme_header_info img").first().attr("src")),
     counters,
   };

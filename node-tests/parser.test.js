@@ -81,6 +81,20 @@ test("parse grouped document placeholder", () => {
   assert.equal(posts[0].media[0].url, null);
 });
 
+test("parse channel description preserves blank lines", () => {
+  const html = `
+    <div class="tgme_channel_info">
+      <div class="tgme_channel_info_header">
+        <div class="tgme_channel_info_header_title"><span>AI и грабли</span></div>
+      </div>
+      <div class="tgme_channel_info_description">Строил HR продукты<br/><br/><a href="https://t.me/nikolay_sheyko">@nikolay_sheyko</a></div>
+    </div>
+  `;
+
+  const { channelInfo } = parsePage(html, "oestick");
+  assert.equal(channelInfo.description, "Строил HR продукты\n\n@nikolay_sheyko");
+});
+
 test("parse discussion widget page with comments", () => {
   const html = `
     <div class="tgme_post_discussion_header_wrap">
