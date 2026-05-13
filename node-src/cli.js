@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,11 +16,21 @@ import {
   postSortKey,
 } from "./parser.js";
 
+const DISCOVERY_SKILL_NAME = "tg-channel-reader";
+
 export async function main(argv) {
   const args = parseArgs(argv);
 
   if (args.help) {
     printHelp();
+    return;
+  }
+  if (args.skill) {
+    await printSkill();
+    return;
+  }
+  if (args.installSkill) {
+    await installDiscoverySkill(args);
     return;
   }
 
@@ -283,6 +294,9 @@ export function parseArgs(argv) {
     commentsLimit: 0,
     sleep: 0.3,
     failOnMediaError: false,
+    skill: false,
+    installSkill: false,
+    installSkillTarget: null,
     help: false,
   };
 
@@ -290,6 +304,14 @@ export function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") {
       args.help = true;
+    } else if (arg === "--skill") {
+      args.skill = true;
+    } else if (arg === "--install-skill") {
+      args.installSkill = true;
+      const next = argv[index + 1];
+      if (next != null && !next.startsWith("--")) {
+        args.installSkillTarget = argv[++index];
+      }
     } else if (arg === "--limit") {
       args.limit = parseIntValue("--limit", argv[++index]);
     } else if (arg === "--out") {
@@ -313,7 +335,7 @@ export function parseArgs(argv) {
     }
   }
 
-  if (!args.help && args.channel == null) {
+  if (!args.help && !args.skill && !args.installSkill && args.channel == null) {
     throw new Error("Missing channel. Run tg-channel-read --help.");
   }
 
@@ -371,6 +393,60 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function printSkill() {
+  const currentFile = fileURLToPath(import.meta.url);
+  const packageRoot = path.dirname(path.dirname(currentFile));
+  process.stdout.write(await readFile(path.join(packageRoot, "skill-data", "core", "SKILL.md"), "utf8"));
+}
+
+async function installDiscoverySkill(args) {
+  const currentFile = fileURLToPath(import.meta.url);
+  const packageRoot = path.dirname(path.dirname(currentFile));
+  const stub = await readFile(path.join(packageRoot, "skills", DISCOVERY_SKILL_NAME, "SKILL.md"), "utf8");
+  const targets = resolveSkillInstallTargets(args);
+
+  for (const targetDir of targets) {
+    await mkdir(targetDir, { recursive: true });
+    const targetFile = path.join(targetDir, "SKILL.md");
+    await writeFile(targetFile, stub, "utf8");
+    console.log(`Installed discovery skill to ${targetFile}`);
+  }
+
+  console.log("Run 'tg-channel-read --skill' to view the agent-facing usage guide.");
+}
+
+export function resolveSkillInstallTargets(args) {
+  const target = args.installSkillTarget;
+  if (target == null) {
+    return unique([skillInstallDirForAgent("codex"), skillInstallDirForAgent("claude"), skillInstallDirForAgent("universal")]);
+  }
+  if (target === "all") {
+    return unique([
+      skillInstallDirForAgent("codex"),
+      skillInstallDirForAgent("claude"),
+      skillInstallDirForAgent("cursor"),
+      skillInstallDirForAgent("universal"),
+    ]);
+  }
+  if (["codex", "claude", "cursor", "universal"].includes(target)) {
+    return [skillInstallDirForAgent(target)];
+  }
+  return [target];
+}
+
+function skillInstallDirForAgent(agent) {
+  const home = os.homedir();
+  if (agent === "codex") return path.join(home, ".codex", "skills", DISCOVERY_SKILL_NAME);
+  if (agent === "claude") return path.join(home, ".claude", "skills", DISCOVERY_SKILL_NAME);
+  if (agent === "cursor") return path.join(home, ".cursor", "skills", DISCOVERY_SKILL_NAME);
+  if (agent === "universal") return path.join(home, ".agents", "skills", DISCOVERY_SKILL_NAME);
+  throw new Error(`Unknown agent: ${agent}`);
+}
+
+function unique(values) {
+  return [...new Set(values)];
+}
+
 function printHelp() {
   const command = path.basename(fileURLToPath(import.meta.url));
   void command;
@@ -385,10 +461,13 @@ Options:
   --comments-limit <n|all> Save latest comments per post, or all available comments. Default: 0
   --sleep <seconds>        Delay between page requests. Default: 0.3
   --fail-on-media-error    Exit non-zero if selected media cannot be downloaded
+  --skill                  Print the agent-facing usage guide
+  --install-skill [target] Install discovery SKILL.md. target: all, codex, claude, cursor, universal, or path
   -h, --help               Show this help
 
 Examples:
   tg-channel-read oestick --limit 50 --out ./out --media none
   tg-channel-read tips_ai --limit 10 --out ./out --media all
-  tg-channel-read nobilix --limit 50 --out ./out --media photo,video`);
+  tg-channel-read nobilix --limit 50 --out ./out --media photo,video
+  tg-channel-read --install-skill all`);
 }

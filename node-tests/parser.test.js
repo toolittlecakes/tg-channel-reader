@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseArgs } from "../node-src/cli.js";
+import { parseArgs, resolveSkillInstallTargets } from "../node-src/cli.js";
 import {
   decodeDataView,
   normalizeChannel,
@@ -25,6 +25,19 @@ test("parseMediaPolicy", () => {
 test("parseArgs accepts comments-limit all", () => {
   assert.equal(parseArgs(["contest", "--comments-limit", "all"]).commentsLimit, "all");
   assert.equal(parseArgs(["contest", "--comments-limit", "100"]).commentsLimit, 100);
+});
+
+test("parseArgs accepts skill without channel", () => {
+  const args = parseArgs(["--skill"]);
+  assert.equal(args.skill, true);
+  assert.equal(args.channel, null);
+});
+
+test("parseArgs accepts install-skill without channel", () => {
+  const args = parseArgs(["--install-skill", "/tmp/tg-skill"]);
+  assert.equal(args.installSkill, true);
+  assert.equal(args.installSkillTarget, "/tmp/tg-skill");
+  assert.deepEqual(resolveSkillInstallTargets(args), ["/tmp/tg-skill"]);
 });
 
 test("decodeDataView", () => {
