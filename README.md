@@ -16,6 +16,22 @@ Local checkout:
 npm install -g .
 ```
 
+## Updates
+
+The CLI checks npm before every command. If a newer version exists, it stops before doing any work.
+
+Update:
+
+```bash
+npm install -g tg-channel-reader@latest
+```
+
+Run once without the gate:
+
+```bash
+tg-channel-read --skip-updates oestick --limit 50 --out ./out
+```
+
 ## Quick Start
 
 Export latest 50 posts:
@@ -53,6 +69,8 @@ Output:
 --comments-limit <n|all> Save latest comments per post, or all available comments. Default: 0
 --sleep <seconds>        Delay between requests. Default: 0.3
 --fail-on-media-error    Exit non-zero if selected media cannot be downloaded
+--skip-updates           Skip the npm latest-version gate for this run
+--version                Print the installed version
 --skill                  Print the agent-facing usage guide
 --install-skill [target] Install discovery SKILL.md. target: all, codex, claude, cursor, universal, or path
 ```

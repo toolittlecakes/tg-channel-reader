@@ -30,6 +30,7 @@ tg-channel-read --skill
 ```
 
 The CLI serves skill content that matches the installed version, so instructions stay in sync with the binary.
+If the CLI reports that a newer npm version is available, update with `npm install -g tg-channel-reader@latest` before continuing.
 
 To install this discovery stub into local agent skill directories:
 

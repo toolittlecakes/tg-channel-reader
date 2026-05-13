@@ -17,10 +17,19 @@ import {
 } from "./parser.js";
 
 const DISCOVERY_SKILL_NAME = "tg-channel-reader";
+const PACKAGE_NAME = "tg-channel-reader";
 
 export async function main(argv) {
   const args = parseArgs(argv);
 
+  if (!args.skipUpdates) {
+    await assertPackageIsCurrent();
+  }
+
+  if (args.version) {
+    console.log(await currentPackageVersion());
+    return;
+  }
   if (args.help) {
     printHelp();
     return;
@@ -297,6 +306,8 @@ export function parseArgs(argv) {
     skill: false,
     installSkill: false,
     installSkillTarget: null,
+    skipUpdates: false,
+    version: false,
     help: false,
   };
 
@@ -304,6 +315,10 @@ export function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") {
       args.help = true;
+    } else if (arg === "--version") {
+      args.version = true;
+    } else if (arg === "--skip-updates") {
+      args.skipUpdates = true;
     } else if (arg === "--skill") {
       args.skill = true;
     } else if (arg === "--install-skill") {
@@ -335,7 +350,7 @@ export function parseArgs(argv) {
     }
   }
 
-  if (!args.help && !args.skill && !args.installSkill && args.channel == null) {
+  if (!args.help && !args.version && !args.skill && !args.installSkill && args.channel == null) {
     throw new Error("Missing channel. Run tg-channel-read --help.");
   }
 
@@ -394,15 +409,11 @@ function sleep(ms) {
 }
 
 async function printSkill() {
-  const currentFile = fileURLToPath(import.meta.url);
-  const packageRoot = path.dirname(path.dirname(currentFile));
-  process.stdout.write(await readFile(path.join(packageRoot, "skill-data", "core", "SKILL.md"), "utf8"));
+  process.stdout.write(await readFile(path.join(packageRoot(), "skill-data", "core", "SKILL.md"), "utf8"));
 }
 
 async function installDiscoverySkill(args) {
-  const currentFile = fileURLToPath(import.meta.url);
-  const packageRoot = path.dirname(path.dirname(currentFile));
-  const stub = await readFile(path.join(packageRoot, "skills", DISCOVERY_SKILL_NAME, "SKILL.md"), "utf8");
+  const stub = await readFile(path.join(packageRoot(), "skills", DISCOVERY_SKILL_NAME, "SKILL.md"), "utf8");
   const targets = resolveSkillInstallTargets(args);
 
   for (const targetDir of targets) {
@@ -447,6 +458,63 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+async function assertPackageIsCurrent() {
+  const [current, latest] = await Promise.all([currentPackageVersion(), fetchLatestPackageVersion()]);
+  if (!isNewerVersion(latest, current)) return;
+
+  throw new Error(
+    [
+      `${PACKAGE_NAME} ${latest} is available. Installed version: ${current}.`,
+      `Update first: npm install -g ${PACKAGE_NAME}@latest`,
+      "Or bypass this gate for this run: tg-channel-read --skip-updates ...",
+    ].join("\n"),
+  );
+}
+
+async function currentPackageVersion() {
+  const packageJson = JSON.parse(await readFile(path.join(packageRoot(), "package.json"), "utf8"));
+  return packageJson.version;
+}
+
+async function fetchLatestPackageVersion() {
+  const response = await fetch(`https://registry.npmjs.org/${PACKAGE_NAME}/latest`, {
+    headers: { accept: "application/json", "user-agent": `${PACKAGE_NAME} update-check` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Update check failed: npm registry returned HTTP ${response.status}. Use --skip-updates to run anyway.`);
+  }
+
+  const metadata = await response.json();
+  if (typeof metadata.version !== "string") {
+    throw new Error("Update check failed: npm registry response has no version. Use --skip-updates to run anyway.");
+  }
+  return metadata.version;
+}
+
+export function isNewerVersion(candidate, current) {
+  const candidateParts = parseVersion(candidate);
+  const currentParts = parseVersion(current);
+  for (let index = 0; index < 3; index += 1) {
+    if (candidateParts[index] > currentParts[index]) return true;
+    if (candidateParts[index] < currentParts[index]) return false;
+  }
+  return false;
+}
+
+function parseVersion(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
+    throw new Error(`Invalid package version: ${version}`);
+  }
+  return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+
+function packageRoot() {
+  const currentFile = fileURLToPath(import.meta.url);
+  return path.dirname(path.dirname(currentFile));
+}
+
 function printHelp() {
   const command = path.basename(fileURLToPath(import.meta.url));
   void command;
@@ -461,6 +529,8 @@ Options:
   --comments-limit <n|all> Save latest comments per post, or all available comments. Default: 0
   --sleep <seconds>        Delay between page requests. Default: 0.3
   --fail-on-media-error    Exit non-zero if selected media cannot be downloaded
+  --skip-updates           Skip the npm latest-version gate for this run
+  --version                Print the installed version
   --skill                  Print the agent-facing usage guide
   --install-skill [target] Install discovery SKILL.md. target: all, codex, claude, cursor, universal, or path
   -h, --help               Show this help

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseArgs, resolveSkillInstallTargets } from "../node-src/cli.js";
+import { isNewerVersion, main, parseArgs, resolveSkillInstallTargets } from "../node-src/cli.js";
 import {
   decodeDataView,
   normalizeChannel,
@@ -38,6 +38,35 @@ test("parseArgs accepts install-skill without channel", () => {
   assert.equal(args.installSkill, true);
   assert.equal(args.installSkillTarget, "/tmp/tg-skill");
   assert.deepEqual(resolveSkillInstallTargets(args), ["/tmp/tg-skill"]);
+});
+
+test("parseArgs accepts version and skip-updates without channel", () => {
+  const args = parseArgs(["--skip-updates", "--version"]);
+  assert.equal(args.skipUpdates, true);
+  assert.equal(args.version, true);
+  assert.equal(args.channel, null);
+});
+
+test("isNewerVersion compares semver triples", () => {
+  assert.equal(isNewerVersion("0.1.6", "0.1.5"), true);
+  assert.equal(isNewerVersion("0.2.0", "0.1.9"), true);
+  assert.equal(isNewerVersion("1.0.0", "0.9.9"), true);
+  assert.equal(isNewerVersion("0.1.5", "0.1.5"), false);
+  assert.equal(isNewerVersion("0.1.4", "0.1.5"), false);
+});
+
+test("main stops when npm has a newer version", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ version: "999.0.0" }),
+  });
+
+  try {
+    await assert.rejects(() => main(["--version"]), /999\.0\.0 is available/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("decodeDataView", () => {

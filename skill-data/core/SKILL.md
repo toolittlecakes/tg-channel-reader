@@ -10,6 +10,8 @@ CLI reader for public Telegram `t.me/s/<username>` preview pages.
 
 Use this tool when the user wants to export public Telegram channel posts without a Telegram login. It can also read public post comments exposed through Telegram's Discussion Widget.
 
+The CLI checks npm before every command. If a newer version exists, it exits before reading anything. Update with `npm install -g tg-channel-reader@latest`, or use `--skip-updates` only when the user explicitly wants to bypass the gate for one run.
+
 ## Main path
 
 ```bash
@@ -41,6 +43,8 @@ tg-channel-read contest --limit 1 --comments-limit all --out ./out
 - `--comments-limit <n|all>`: save latest comments per selected post, or all available comments.
 - `--sleep <seconds>`: delay between page/widget requests.
 - `--fail-on-media-error`: exit non-zero if selected media cannot be downloaded.
+- `--skip-updates`: skip the npm latest-version gate for this run.
+- `--version`: print the installed version.
 - `--skill`: print this guide.
 - `--install-skill`: install the discovery `SKILL.md` into local agent skill directories.
 
@@ -99,6 +103,7 @@ The widget page exposes `data-before`, `peer`, `top_msg_id`, and `discussion_has
 ## Rules
 
 - Use `--media none` unless the user explicitly asks to download media.
+- Do not use `--skip-updates` by default. First update the package when the update gate blocks execution.
 - Use `--comments-limit all` only when the user explicitly asks for all comments. Do not use it as the default path for a whole channel; reading all comments for many posts can be slow and request-heavy. Start with a small `--limit` unless the user requested a full export.
 - Treat unavailable comments as expected output, not a failure.
 - Run `npm test` after changing parser or CLI behavior.
