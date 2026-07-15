@@ -207,6 +207,7 @@ function parseComment($, message, channel, postId) {
     reply_to: parseCommentReply($, replyNode),
     reactions: parseReactions($, message),
     links: parseLinks($, textNode),
+    media: parseMedia($, message, channel, `${postId}-comment-${rawId}`),
   };
 }
 

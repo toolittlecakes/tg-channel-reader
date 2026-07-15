@@ -122,10 +122,22 @@ export async function readChannel({
   }
 
   const selectedPosts = dedupePosts(posts).sort(postSortKey).reverse().slice(0, limit);
-  let mediaDownloadFailures = 0;
+  if (commentsLimit === "all" || commentsLimit > 0) {
+    for (const post of selectedPosts) {
+      post.comments = await readPostComments({ channel, postId: post.post_id, limit: commentsLimit, sleepMs });
+      if (sleepMs > 0) {
+        await sleep(sleepMs);
+      }
+    }
+  }
 
+  let mediaDownloadFailures = 0;
   for (const post of selectedPosts) {
-    for (const media of post.media) {
+    const mediaItems = [
+      ...post.media,
+      ...(post.comments?.comments.flatMap((comment) => comment.media) ?? []),
+    ];
+    for (const media of mediaItems) {
       await applyMediaPolicy(media, mediaTypes, mediaDir);
       if (media.download_requested && !media.downloaded) {
         mediaDownloadFailures += 1;
@@ -135,15 +147,6 @@ export async function readChannel({
 
   if (failOnMediaError && mediaDownloadFailures > 0) {
     throw new Error(`${mediaDownloadFailures} selected media item(s) could not be downloaded`);
-  }
-
-  if (commentsLimit === "all" || commentsLimit > 0) {
-    for (const post of selectedPosts) {
-      post.comments = await readPostComments({ channel, postId: post.post_id, limit: commentsLimit, sleepMs });
-      if (sleepMs > 0) {
-        await sleep(sleepMs);
-      }
-    }
   }
 
   const firstChannelInfo = pages.find((page) => page.channel_info)?.channel_info ?? {};

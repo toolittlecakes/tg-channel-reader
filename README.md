@@ -77,7 +77,7 @@ Output:
 
 ## Media
 
-By default, media is not downloaded. The JSON still includes media metadata and preview URLs when Telegram exposes them.
+By default, media is not downloaded. The JSON still includes media metadata and preview URLs for posts and comments when Telegram exposes them. Comment media is stored in each comment's `media` array and uses the same `--media` policy as post media.
 
 Download all direct media URLs:
 

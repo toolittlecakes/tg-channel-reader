@@ -147,6 +147,7 @@ test("parse discussion widget page with comments", () => {
               <div class="tgme_widget_message_text js-message_reply_text">Original<br/>text</div>
             </div>
             <div class="tgme_widget_message_text js-message_text">Not bad <a href="https://example.com">link</a></div>
+            <a class="tgme_widget_message_photo_wrap" href="https://t.me/contest/198?comment=238737&amp;single" style="background-image:url('//example.com/comment.jpg')"></a>
             <div class="tgme_widget_message_reactions js-message_reactions">
               <span class="tgme_reaction"><b>❤</b>3</span>
             </div>
@@ -189,6 +190,20 @@ test("parse discussion widget page with comments", () => {
   assert.equal(page.comments[0].reply_to.text_plain, "Original\ntext");
   assert.deepEqual(page.comments[0].reactions, [{ emoji: "❤", count: "3" }]);
   assert.deepEqual(page.comments[0].links, [{ text: "link", url: "https://example.com/" }]);
+  assert.deepEqual(page.comments[0].media[0], {
+    id: "contest/198-comment-238737/1",
+    type: "photo",
+    url: "https://example.com/comment.jpg",
+    telegram_url: "https://t.me/contest/198?comment=238737&single",
+    thumbnail_url: null,
+    title: null,
+    size: null,
+    filename: null,
+    local_path: null,
+    downloaded: false,
+    download_requested: false,
+    download_error: null,
+  });
 });
 
 test("parse unavailable discussion widget page", () => {
@@ -216,6 +231,10 @@ test("parse comments API fragment", () => {
             <span class="tgme_widget_message_author_name">Deleted Account</span>
           </div>
           <div class="tgme_widget_message_text js-message_text"><code>Hello</code><br/><i>world</i></div>
+          <a class="tgme_widget_message_document_wrap" href="https://t.me/contest/198?comment=193654&amp;single">
+            <div class="tgme_widget_message_document_title">notes.pdf</div>
+            <div class="tgme_widget_message_document_extra">42 KB</div>
+          </a>
           <div class="tgme_widget_message_footer">
             <a class="tgme_widget_message_date" href="https://t.me/contest/198?comment=193654">
               <time datetime="2022-04-20T09:09:35+00:00">Apr 20, 2022</time>
@@ -230,4 +249,6 @@ test("parse comments API fragment", () => {
   assert.equal(page.next_before, 193654);
   assert.equal(page.comments.length, 1);
   assert.equal(page.comments[0].text_plain, "Hello\nworld");
+  assert.equal(page.comments[0].media[0].type, "document");
+  assert.equal(page.comments[0].media[0].title, "notes.pdf");
 });

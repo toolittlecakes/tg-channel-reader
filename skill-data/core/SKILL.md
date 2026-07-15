@@ -38,7 +38,7 @@ tg-channel-read contest --limit 1 --comments-limit all --out ./out
 
 - `--limit <n>`: number of logical posts to save.
 - `--out <dir>`: output directory.
-- `--media <policy>`: `none`, `all`, or comma list: `photo,video,document,audio,sticker`.
+- `--media <policy>`: `none`, `all`, or comma list: `photo,video,document,audio,sticker`. Applies to media in both posts and loaded comments.
 - `--before <n>`: start from a specific `t.me/s` `data-before` cursor.
 - `--comments-limit <n|all>`: save latest comments per selected post, or all available comments.
 - `--sleep <seconds>`: delay between page/widget requests.
@@ -69,6 +69,8 @@ Comments are stored under each post:
 ```
 
 Comment order is chronological: oldest first, newest last.
+
+Each comment includes a `media` array with the same metadata and download fields as post media. Use `--comments-limit` to load comments and `--media` to select which post and comment media files to download.
 
 For `--comments-limit 100`, the CLI keeps the latest 100 comments, ordered oldest to newest. For `--comments-limit all`, it keeps every comment available through the widget.
 
