@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { isNewerVersion, main, parseArgs, resolveSkillInstallTargets } from "../node-src/cli.js";
+import {
+  hydrateArchive,
+  isNewerVersion,
+  main,
+  normalizeMessageRef,
+  parseArgs,
+  parseMessageList,
+  resolveSkillInstallTargets,
+} from "../node-src/cli.js";
 import {
   decodeDataView,
   normalizeChannel,
@@ -25,6 +36,69 @@ test("parseMediaPolicy", () => {
 test("parseArgs accepts comments-limit all", () => {
   assert.equal(parseArgs(["contest", "--comments-limit", "all"]).commentsLimit, "all");
   assert.equal(parseArgs(["contest", "--comments-limit", "100"]).commentsLimit, 100);
+});
+
+test("parseArgs accepts repeated hydration messages", () => {
+  const args = parseArgs([
+    "--hydrate", "./out/oestick.json",
+    "--message", "oestick/527",
+    "--message", "https://t.me/oestick/527?comment=5778",
+    "--messages", "./messages.txt",
+  ]);
+  assert.equal(args.hydrate, "./out/oestick.json");
+  assert.deepEqual(args.messages, ["oestick/527", "https://t.me/oestick/527?comment=5778"]);
+  assert.equal(args.messagesFile, "./messages.txt");
+  assert.equal(args.channel, null);
+});
+
+test("normalizeMessageRef validates channel and parses lists", () => {
+  assert.equal(normalizeMessageRef("oestick/527", "oestick"), "oestick/527");
+  assert.equal(normalizeMessageRef("https://t.me/oestick/527?comment=5778", "oestick"), "oestick/527?comment=5778");
+  assert.throws(() => normalizeMessageRef("other/527", "oestick"), /Invalid message reference/);
+  assert.deepEqual(parseMessageList("# selected\noestick/527\n\noestick/528?comment=1\n"), [
+    "oestick/527",
+    "oestick/528?comment=1",
+  ]);
+});
+
+test("hydrateArchive downloads all media for selected post and comment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tg-channel-reader-"));
+  const archiveFile = path.join(root, "oestick.json");
+  const media = (id, url) => ({ id, type: "photo", url, downloaded: false, download_requested: false, download_error: null });
+  const payload = {
+    channel: "oestick",
+    posts: [{
+      post_id: 527,
+      url: "https://t.me/oestick/527",
+      media: [media("post-1", "https://cdn4.telesco.pe/post.jpg")],
+      comments: { comments: [{
+        id: "5778",
+        url: "https://t.me/oestick/527?comment=5778",
+        media: [media("comment-1", "https://cdn4.telesco.pe/a.jpg"), media("comment-2", "https://cdn4.telesco.pe/b.jpg")],
+      }] },
+    }],
+  };
+  await writeFile(archiveFile, JSON.stringify(payload));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    arrayBuffer: async () => new TextEncoder().encode("image").buffer,
+    headers: { get: () => "image/jpeg" },
+  });
+
+  try {
+    const result = await hydrateArchive({
+      archiveFile,
+      messageRefs: ["oestick/527", "oestick/527?comment=5778"],
+    });
+    assert.deepEqual(result, { messageCount: 2, downloadedCount: 3, mediaDownloadFailures: 0 });
+    const hydrated = JSON.parse(await readFile(archiveFile, "utf8"));
+    assert.equal(hydrated.posts[0].media[0].downloaded, true);
+    assert.equal(hydrated.posts[0].comments.comments[0].media[1].downloaded, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("parseArgs accepts skill without channel", () => {

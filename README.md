@@ -73,6 +73,9 @@ Output:
 --version                Print the installed version
 --skill                  Print the agent-facing usage guide
 --install-skill [target] Install discovery SKILL.md. target: all, codex, claude, cursor, universal, or path
+--hydrate <archive.json> Download all media from selected messages and update the archive
+--message <ref>          Message ref to hydrate; repeat for multiple messages
+--messages <file>        Read message refs from a newline-delimited file
 ```
 
 ## Media
@@ -92,6 +95,34 @@ tg-channel-read nobilix --limit 50 --media photo,video --out ./out
 ```
 
 Some Telegram preview items expose only a Telegram post link, not a direct file URL. Those stay in JSON with `download_error: "no_direct_url"` when download is requested.
+
+### Selective hydration
+
+First export media metadata without downloading files:
+
+```bash
+tg-channel-read oestick --limit 20 --comments-limit 100 --media none --out ./out
+```
+
+Then download every media item attached to selected posts or comments and update the same JSON archive:
+
+```bash
+tg-channel-read --hydrate ./out/oestick.json \
+  --message oestick/527 \
+  --message 'https://t.me/oestick/527?comment=5778'
+```
+
+For a longer selection, use a newline-delimited file. Empty lines and lines starting with `#` are ignored:
+
+```text
+oestick/527
+oestick/527?comment=5778
+https://t.me/oestick/530?comment=5812
+```
+
+```bash
+tg-channel-read --hydrate ./out/oestick.json --messages ./messages.txt
+```
 
 ## Comments
 

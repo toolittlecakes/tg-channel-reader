@@ -42,6 +42,18 @@ export async function main(argv) {
     await installDiscoverySkill(args);
     return;
   }
+  if (args.hydrate) {
+    const messageRefs = [...args.messages];
+    if (args.messagesFile) {
+      messageRefs.push(...parseMessageList(await readFile(args.messagesFile, "utf8")));
+    }
+    const result = await hydrateArchive({ archiveFile: args.hydrate, messageRefs });
+    console.log(`hydrated ${result.messageCount} messages, downloaded ${result.downloadedCount} media -> ${args.hydrate}`);
+    if (result.mediaDownloadFailures > 0) {
+      throw new Error(`${result.mediaDownloadFailures} media item(s) could not be downloaded`);
+    }
+    return;
+  }
 
   const channel = normalizeChannel(args.channel);
   const mediaTypes = parseMediaPolicy(args.media);
@@ -63,6 +75,68 @@ export async function main(argv) {
       process.exitCode = 1;
     }
   }
+}
+
+export async function hydrateArchive({ archiveFile, messageRefs }) {
+  if (messageRefs.length === 0) {
+    throw new Error("Hydration requires at least one --message or --messages entry");
+  }
+
+  const payload = JSON.parse(await readFile(archiveFile, "utf8"));
+  if (typeof payload.channel !== "string" || !Array.isArray(payload.posts)) {
+    throw new Error(`Invalid tg-channel-reader archive: ${archiveFile}`);
+  }
+
+  const selectors = new Set(messageRefs.map((value) => normalizeMessageRef(value, payload.channel)));
+  const selectedMessages = [];
+  for (const post of payload.posts) {
+    const postRef = `${payload.channel}/${post.post_id}`;
+    if (selectors.has(postRef)) selectedMessages.push(post);
+    for (const comment of post.comments?.comments ?? []) {
+      const commentRef = `${postRef}?comment=${comment.id}`;
+      if (selectors.has(commentRef)) selectedMessages.push(comment);
+    }
+  }
+
+  const foundRefs = new Set(selectedMessages.map((message) => message.url ? normalizeMessageRef(message.url, payload.channel) : null));
+  const missing = [...selectors].filter((selector) => !foundRefs.has(selector));
+  if (missing.length > 0) {
+    throw new Error(`Messages not found in archive: ${missing.join(", ")}`);
+  }
+
+  const mediaDir = path.join(path.dirname(archiveFile), "media");
+  await mkdir(mediaDir, { recursive: true });
+  let downloadedCount = 0;
+  let mediaDownloadFailures = 0;
+  for (const message of selectedMessages) {
+    for (const media of message.media ?? []) {
+      if (media.downloaded) continue;
+      await applyMediaPolicy(media, null, mediaDir);
+      if (media.downloaded) downloadedCount += 1;
+      else mediaDownloadFailures += 1;
+    }
+  }
+
+  await writeFile(archiveFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  return { messageCount: selectedMessages.length, downloadedCount, mediaDownloadFailures };
+}
+
+export function normalizeMessageRef(value, expectedChannel) {
+  const raw = value.trim();
+  const url = new URL(raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://t.me/${raw}`);
+  if (url.hostname !== "t.me" && url.hostname !== "www.t.me") {
+    throw new Error(`Invalid Telegram message reference: ${value}`);
+  }
+  const [channel, postId, extra] = url.pathname.split("/").filter(Boolean);
+  const commentId = url.searchParams.get("comment");
+  if (extra != null || channel !== expectedChannel || !/^\d+$/.test(postId ?? "") || (commentId != null && !/^\d+$/.test(commentId))) {
+    throw new Error(`Invalid message reference for ${expectedChannel}: ${value}`);
+  }
+  return `${channel}/${postId}${commentId == null ? "" : `?comment=${commentId}`}`;
+}
+
+export function parseMessageList(content) {
+  return content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
 }
 
 export async function readChannel({
@@ -309,6 +383,9 @@ export function parseArgs(argv) {
     skill: false,
     installSkill: false,
     installSkillTarget: null,
+    hydrate: null,
+    messages: [],
+    messagesFile: null,
     skipUpdates: false,
     version: false,
     help: false,
@@ -330,6 +407,12 @@ export function parseArgs(argv) {
       if (next != null && !next.startsWith("--")) {
         args.installSkillTarget = argv[++index];
       }
+    } else if (arg === "--hydrate") {
+      args.hydrate = argv[++index];
+    } else if (arg === "--message") {
+      args.messages.push(argv[++index]);
+    } else if (arg === "--messages") {
+      args.messagesFile = argv[++index];
     } else if (arg === "--limit") {
       args.limit = parseIntValue("--limit", argv[++index]);
     } else if (arg === "--out") {
@@ -353,7 +436,7 @@ export function parseArgs(argv) {
     }
   }
 
-  if (!args.help && !args.version && !args.skill && !args.installSkill && args.channel == null) {
+  if (!args.help && !args.version && !args.skill && !args.installSkill && !args.hydrate && args.channel == null) {
     throw new Error("Missing channel. Run tg-channel-read --help.");
   }
 
@@ -536,11 +619,15 @@ Options:
   --version                Print the installed version
   --skill                  Print the agent-facing usage guide
   --install-skill [target] Install discovery SKILL.md. target: all, codex, claude, cursor, universal, or path
+  --hydrate <archive.json> Download all media from selected messages and update the archive
+  --message <ref>          Message ref to hydrate; repeat for multiple messages
+  --messages <file>        Read message refs from a newline-delimited file
   -h, --help               Show this help
 
 Examples:
   tg-channel-read oestick --limit 50 --out ./out --media none
   tg-channel-read tips_ai --limit 10 --out ./out --media all
   tg-channel-read nobilix --limit 50 --out ./out --media photo,video
+  tg-channel-read --hydrate ./out/oestick.json --message oestick/527 --message 'oestick/527?comment=5778'
   tg-channel-read --install-skill all`);
 }

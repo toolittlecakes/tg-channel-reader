@@ -47,6 +47,9 @@ tg-channel-read contest --limit 1 --comments-limit all --out ./out
 - `--version`: print the installed version.
 - `--skill`: print this guide.
 - `--install-skill`: install the discovery `SKILL.md` into local agent skill directories.
+- `--hydrate <archive.json>`: download all media attached to selected messages and update the existing archive.
+- `--message <ref>`: select one post or comment for hydration; repeat the option for multiple messages.
+- `--messages <file>`: read message refs from a newline-delimited file; blank lines and `#` comments are ignored.
 
 ## Comments
 
@@ -71,6 +74,16 @@ Comments are stored under each post:
 Comment order is chronological: oldest first, newest last.
 
 Each comment includes a `media` array with the same metadata and download fields as post media. Use `--comments-limit` to load comments and `--media` to select which post and comment media files to download.
+
+For a two-phase workflow, export with `--media none`, inspect the `media` arrays, then hydrate complete selected messages:
+
+```bash
+tg-channel-read --hydrate ./out/oestick.json \
+  --message oestick/527 \
+  --message 'oestick/527?comment=5778'
+```
+
+Message refs may be `channel/post`, `channel/post?comment=id`, or full `https://t.me/...` URLs. Hydration downloads every media item attached to each selected message, skips items already marked as downloaded, writes files under the archive's sibling `media/` directory, and updates the archive in place. Use `--messages ./messages.txt` for a list.
 
 For `--comments-limit 100`, the CLI keeps the latest 100 comments, ordered oldest to newest. For `--comments-limit all`, it keeps every comment available through the widget.
 
